@@ -2,5 +2,5 @@
 
 public interface INotificationHandler<in TNotification>
 {
-    Task Handle(TNotification request, CancellationToken cancellationToken = default);
+	Task Handle(TNotification request, CancellationToken cancellationToken = default);
 }

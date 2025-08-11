@@ -2,5 +2,5 @@
 
 public interface IPublisher
 {
-    Task Publish(INotification request, CancellationToken cancellationToken = default);
+	Task Publish(INotification request, CancellationToken cancellationToken = default);
 }

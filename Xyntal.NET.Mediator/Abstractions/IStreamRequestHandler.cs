@@ -2,5 +2,5 @@
 
 public interface IStreamRequestHandler<in TRequest, TResponse> where TRequest : IStreamRequest<TResponse>
 {
-    IAsyncEnumerable<TResponse> Handle(TRequest request, CancellationToken cancellationToken = default);
+	IAsyncEnumerable<TResponse> Handle(TRequest request, CancellationToken cancellationToken = default);
 }

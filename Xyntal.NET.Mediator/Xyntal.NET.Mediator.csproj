@@ -1,16 +1,18 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>netstandard2.1</TargetFramework>
+		<TargetFramework>netstandard2.0</TargetFramework>
 		<LangVersion>preview</LangVersion>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 		<Version>0.9.2-beta.3</Version>
-		<Title>Xyntal Mediator</Title>
+		<Title>Xyntal.NET Mediator</Title>
 		<Authors>Xyntal</Authors>
 		<PackageIcon>xyntal_logo.png</PackageIcon>
 		<SignAssembly>False</SignAssembly>
+		<PackageProjectUrl></PackageProjectUrl>
+		<RepositoryUrl>https://github.com/Xyntal/Mediator</RepositoryUrl>
 	</PropertyGroup>
 
 	<ItemGroup>
