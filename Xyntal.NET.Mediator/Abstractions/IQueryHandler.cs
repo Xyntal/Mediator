@@ -1,6 +1,6 @@
 ﻿namespace Xyntal.NET.Mediator.Abstractions;
 
-public interface IRequestHandler<in TRequest, TResponse> where TRequest : IRequest<TResponse>
+public interface IQueryHandler<in TRequest, TResponse> where TRequest : IQuery<TResponse>
 {
 	Task<TResponse> Handle(TRequest request, CancellationToken cancellationToken = default);
 }

@@ -10,7 +10,7 @@ public class Mediator
 		IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>> streamsFactories
 	) : IMediator
 {
-	public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
+	public async Task<TResponse> Send<TResponse>(ICommand<TResponse> request, CancellationToken cancellationToken = default)
 	{
 		if (!factories.TryGetValue(request.GetType(), out var factory))
 		{
@@ -18,6 +18,17 @@ public class Mediator
 		}
 
 		var response = await factory(serviceProvider, request, cancellationToken);
+		return (TResponse)response!;
+	}
+
+	public async Task<TResponse> Send<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default)
+	{
+		if (!factories.TryGetValue(query.GetType(), out var factory))
+		{
+			throw new InvalidOperationException($"No handler found for {query.GetType().Name}");
+		}
+
+		var response = await factory(serviceProvider, query, cancellationToken);
 		return (TResponse)response!;
 	}
 

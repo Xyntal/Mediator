@@ -16,16 +16,21 @@ public static class MediatorExtensions
 	public static IServiceCollection AddMediator(this IServiceCollection services, params Type[] types)
 	{
 		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>> factories = [];
+		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, ValueTask<object>>> commandFactories = [];
 		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>> notificationsFactories = [];
 		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>> streamFactories = [];
 
 		Assembly[] assemblies = types.Length == 0 ? [Assembly.GetEntryAssembly()] : [.. types.Select(Assembly.GetAssembly)];
 
 		services.RegisterPipelineBehaviors(assemblies);
+		services.RegisterCommandPipelineBehaviors(assemblies);
+		
 		services.RegisterQueryHandlers(assemblies, ref factories);
+		services.RegisterCommandHandlers(assemblies, ref commandFactories);
 		services.RegisterNotificationHandlers(assemblies, ref notificationsFactories);
 		services.RegisterStreamHandlers(assemblies, ref streamFactories);
 
+		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, ValueTask<object>>>>(commandFactories);
 		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>>>(factories);
 		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>>>(notificationsFactories);
 		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>>>(streamFactories);
@@ -54,6 +59,18 @@ public static class MediatorExtensions
 			.ToArray();
 	}
 
+	private static IServiceCollection RegisterCommandPipelineBehaviors(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(ICommandPipelineBehavior<,>));
+
+		foreach (var handler in handlerTypes)
+		{
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
+
+		return services;
+	}
+	
 	private static IServiceCollection RegisterPipelineBehaviors(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan)
 	{
 		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(IPipelineBehavior<,>));
@@ -66,9 +83,31 @@ public static class MediatorExtensions
 		return services;
 	}
 
+	private static IServiceCollection RegisterCommandHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref Dictionary<Type, Func<IServiceProvider, object, CancellationToken, ValueTask<object>>> factories)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(ICommandHandler<,>));
+
+		foreach (var handler in handlerTypes)
+		{
+			MethodInfo helperMethod = typeof(InvokeHelper).GetMethod(nameof(InvokeHelper.InvokeCommandRequest), BindingFlags.Static | BindingFlags.Public)!
+				.MakeGenericMethod(handler.RequestType, handler.ResponseType);
+
+			MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
+
+			var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, ValueTask<object>>>(call, spParam, reqParam, ctParam);
+			Func<IServiceProvider, object, CancellationToken, ValueTask<object>> compiled = lambda.Compile();
+
+			factories[handler.RequestType] = compiled;
+
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
+
+		return services;
+	}
+	
 	private static IServiceCollection RegisterQueryHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>> factories)
 	{
-		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(IRequestHandler<,>));
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(IQueryHandler<,>));
 
 		foreach (var handler in handlerTypes)
 		{
