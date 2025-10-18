@@ -3,5 +3,5 @@
 [AttributeUsage(AttributeTargets.Class)]
 public class PipelineOrderAttribute(int order) : Attribute
 {
-    public int Order { get; } = order;
+	public int Order { get; } = order;
 }

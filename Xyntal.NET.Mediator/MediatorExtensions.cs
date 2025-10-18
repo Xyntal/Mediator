@@ -1,183 +1,176 @@
-﻿namespace Xyntal.NET.Mediator;
+﻿using Xyntal.NET.Mediator.Models;
+
+namespace Xyntal.NET.Mediator;
 
 public static class MediatorExtensions
 {
-    public static IServiceCollection AddMediator(this IServiceCollection services)
-    {
-        return AddMediator(services, []);
-    }
+	private static ParameterExpression spParam = Expression.Parameter(typeof(IServiceProvider), "sp");
+	private static ParameterExpression reqParam = Expression.Parameter(typeof(object), "request");
+	private static ParameterExpression ctParam = Expression.Parameter(typeof(CancellationToken), "ct");
 
-    public static IServiceCollection AddMediator(this IServiceCollection services, params Type[] types)
-    {
-        ConcurrentDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>> factories = [];
-        ConcurrentDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>> notificationsFactory = [];
+	public static IServiceCollection AddMediator(this IServiceCollection services)
+	{
+		return AddMediator(services, []);
+	}
 
-        Assembly[] assemblies = types.Length == 0 ? [Assembly.GetEntryAssembly()] : [.. types.Select(Assembly.GetAssembly)];
+	public static IServiceCollection AddMediator(this IServiceCollection services, params Type[] types)
+	{
+		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>> factories = [];
+		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, ValueTask<object>>> commandFactories = [];
+		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>> notificationsFactories = [];
+		Dictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>> streamFactories = [];
 
-        services.RegisterPipelineBehaviors(assemblies);
-        services.RegisterQueryHandlers(assemblies, ref factories);
-        services.RegisterNotificationHandlers(assemblies, ref notificationsFactory);
+		Assembly[] assemblies = types.Length == 0 ? [Assembly.GetEntryAssembly()] : [.. types.Select(Assembly.GetAssembly)];
 
+		services.RegisterPipelineBehaviors(assemblies);
+		services.RegisterCommandPipelineBehaviors(assemblies);
+		
+		services.RegisterQueryHandlers(assemblies, ref factories);
+		services.RegisterCommandHandlers(assemblies, ref commandFactories);
+		services.RegisterNotificationHandlers(assemblies, ref notificationsFactories);
+		services.RegisterStreamHandlers(assemblies, ref streamFactories);
 
+		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, ValueTask<object>>>>(commandFactories);
+		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>>>(factories);
+		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>>>(notificationsFactories);
+		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>>>(streamFactories);
 
+		services.AddSingleton<ISender, Mediator>();
+		services.AddSingleton<IPublisher, Mediator>();
+		services.AddSingleton<IMediator, Mediator>();
 
-        foreach (var assembly in assemblies)
-        {
-            services.RegisterStreamHandlers(assembly);
-        }
+		return services;
+	}
 
-        services.AddSingleton(factories);
-        services.AddSingleton(notificationsFactory);
+	private static HandlerTypeInfo[] GetHandlerTypes(IEnumerable<Assembly> assembliesToScan, Type typeToAdd)
+	{
+		return assembliesToScan
+			.SelectMany(a => a.GetTypes())
+			.Where(t => !t.IsAbstract && !t.IsInterface)
+			.SelectMany(imp => imp.GetInterfaces()
+			.Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeToAdd)
+						.Select(i => new HandlerTypeInfo()
+						{
+							Interface = i,
+							Implementations = imp,
+							RequestType = i.GetGenericArguments()[0],
+							ResponseType = i.GetGenericArguments()[1]
+						}))
+			.ToArray();
+	}
 
-        services.AddSingleton<ISender, Mediator>();
-        services.AddSingleton<IPublisher, Mediator>();
-        services.AddSingleton<IMediator, Mediator>();
+	private static IServiceCollection RegisterCommandPipelineBehaviors(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(ICommandPipelineBehavior<,>));
 
-        return services;
-    }
+		foreach (var handler in handlerTypes)
+		{
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
 
-    private static IServiceCollection RegisterPipelineBehaviors(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan)
-    {
-        var handlerTypes = assembliesToScan
-            .SelectMany(a => a.GetTypes())
-            .Where(t => !t.IsAbstract && !t.IsInterface)
-            .SelectMany(imp => imp.GetInterfaces()
-            .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>))
-                       .Select(i => new
-                       {
-                           Interafce = i,
-                           Implementations = imp,
-                           RequestType = i.GetGenericArguments()[0],
-                           ResponseType = i.GetGenericArguments()[1]
-                       }));
+		return services;
+	}
+	
+	private static IServiceCollection RegisterPipelineBehaviors(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(IPipelineBehavior<,>));
 
-        foreach (var handler in handlerTypes)
-        {
-            services.AddTransient(handler.Interafce, handler.Implementations);
-        }
+		foreach (var handler in handlerTypes)
+		{
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
 
-        return services;
-    }
+		return services;
+	}
 
-    private static IServiceCollection RegisterQueryHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref ConcurrentDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>> factories)
-    {
-        var handlerTypes = assembliesToScan
-            .SelectMany(a => a.GetTypes())
-            .Where(t => !t.IsAbstract && !t.IsInterface)
-            .SelectMany(impl => impl.GetInterfaces()
-            .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestHandler<,>))
-                          .Select(i => new
-                          {
-                              Interface = i,
-                              Implementations = impl,
-                              RequestType = i.GetGenericArguments()[0],
-                              ResponseType = i.GetGenericArguments()[1]
-                          }))
-            .ToList();
+	private static IServiceCollection RegisterCommandHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref Dictionary<Type, Func<IServiceProvider, object, CancellationToken, ValueTask<object>>> factories)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(ICommandHandler<,>));
 
+		foreach (var handler in handlerTypes)
+		{
+			MethodInfo helperMethod = typeof(InvokeHelper).GetMethod(nameof(InvokeHelper.InvokeCommandRequest), BindingFlags.Static | BindingFlags.Public)!
+				.MakeGenericMethod(handler.RequestType, handler.ResponseType);
 
-        foreach (var handler in handlerTypes)
-        {
-            MethodInfo helperMethod = typeof(PipelineHelper).GetMethod(nameof(PipelineHelper.InvokeRequest), BindingFlags.Static | BindingFlags.Public)!
-                                                            .MakeGenericMethod(handler.RequestType, handler.ResponseType);
+			MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
 
-            ParameterExpression spParam = Expression.Parameter(typeof(IServiceProvider), "sp");
-            ParameterExpression reqParam = Expression.Parameter(typeof(object), "request");
-            ParameterExpression ctParam = Expression.Parameter(typeof(CancellationToken), "ct");
+			var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, ValueTask<object>>>(call, spParam, reqParam, ctParam);
+			Func<IServiceProvider, object, CancellationToken, ValueTask<object>> compiled = lambda.Compile();
 
-            MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
+			factories[handler.RequestType] = compiled;
 
-            var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, Task<object>>>(call, spParam, reqParam, ctParam);
-            Func<IServiceProvider, object, CancellationToken, Task<object>> compiled = lambda.Compile();
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
 
-            factories[handler.RequestType] = compiled;
+		return services;
+	}
+	
+	private static IServiceCollection RegisterQueryHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>> factories)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(IQueryHandler<,>));
 
-            services.AddTransient(handler.Interface, handler.Implementations);
-        }
+		foreach (var handler in handlerTypes)
+		{
+			MethodInfo helperMethod = typeof(InvokeHelper).GetMethod(nameof(InvokeHelper.InvokeRequest), BindingFlags.Static | BindingFlags.Public)!
+															.MakeGenericMethod(handler.RequestType, handler.ResponseType);
 
-        services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task<object>>>>(factories);
-        return services;
-    }
+			MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
 
-    private static IServiceCollection RegisterNotificationHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref ConcurrentDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>> notificationsFactory)
-    {
-        var handlerTypes = assembliesToScan
-          .SelectMany(a => a.GetTypes())
-          .Where(t => !t.IsAbstract && !t.IsInterface)
-          .SelectMany(impl => impl.GetInterfaces()
-          .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(INotificationHandler<>))
-                        .Select(i => new
-                        {
-                            Interface = i,
-                            Implementations = impl,
-                            RequestType = i.GetGenericArguments()[0]
-                        }))
-          .GroupBy(x => x.RequestType)
-          .ToList();
+			var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, Task<object>>>(call, spParam, reqParam, ctParam);
+			Func<IServiceProvider, object, CancellationToken, Task<object>> compiled = lambda.Compile();
 
-        foreach (var handler in handlerTypes)
-        {
-            foreach (var item in handler.ToList())
-            {
-                services.AddTransient(item.Interface, item.Implementations);
-            }
+			factories[handler.RequestType] = compiled;
 
-            MethodInfo helperMethod = typeof(PipelineHelper).GetMethod(nameof(PipelineHelper.InvokeNotification), BindingFlags.Static | BindingFlags.Public)!
-                                                            .MakeGenericMethod(handler.Key);
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
 
-            ParameterExpression spParam = Expression.Parameter(typeof(IServiceProvider), "sp");
-            ParameterExpression reqParam = Expression.Parameter(typeof(object), "request");
-            ParameterExpression ctParam = Expression.Parameter(typeof(CancellationToken), "ct");
+		return services;
+	}
 
-            MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
+	private static IServiceCollection RegisterNotificationHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref Dictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>> notificationsFactory)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(INotificationHandler<>));
 
-            var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, Task>>(call, spParam, reqParam, ctParam);
-            Func<IServiceProvider, object, CancellationToken, Task> compiled = lambda.Compile();
+		foreach (var handler in handlerTypes.GroupBy(x => x.RequestType))
+		{
+			foreach (var item in handler.ToList())
+			{
+				services.AddTransient(item.Interface, item.Implementations);
+			}
 
-            notificationsFactory[handler.Key] = compiled;
-        }
+			MethodInfo helperMethod = typeof(InvokeHelper).GetMethod(nameof(InvokeHelper.InvokeNotification), BindingFlags.Static | BindingFlags.Public)!
+															.MakeGenericMethod(handler.Key);
 
-        services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>>>(notificationsFactory);
-        return services;
-    }
+			MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
 
+			var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, Task>>(call, spParam, reqParam, ctParam);
+			Func<IServiceProvider, object, CancellationToken, Task> compiled = lambda.Compile();
 
+			notificationsFactory[handler.Key] = compiled;
+		}
 
+		return services;
+	}
 
+	private static IServiceCollection RegisterStreamHandlers(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan, ref Dictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>> streamFactories)
+	{
+		HandlerTypeInfo[] handlerTypes = GetHandlerTypes(assembliesToScan, typeof(IStreamRequestHandler<,>));
 
+		foreach (var handler in handlerTypes)
+		{
+			MethodInfo helperMethod = typeof(InvokeHelper).GetMethod(nameof(InvokeHelper.InvokeStream), BindingFlags.Static | BindingFlags.Public)!
+															.MakeGenericMethod(handler.RequestType, handler.ResponseType);
 
+			MethodCallExpression call = Expression.Call(helperMethod, spParam, reqParam, ctParam);
 
+			var lambda = Expression.Lambda<Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>>(call, spParam, reqParam, ctParam);
+			Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>> compiled = lambda.Compile();
 
+			streamFactories[handler.RequestType] = compiled;
 
+			services.AddTransient(handler.Interface, handler.Implementations);
+		}
 
-
-
-
-
-
-
-    private static IServiceCollection RegisterStreamHandlers(this IServiceCollection services, Assembly assembly)
-    {
-        var handlerTypes = assembly.GetTypes()
-                   .Where(t => t.IsClass && !t.IsAbstract)
-                   .SelectMany(t => t.GetInterfaces()
-                       .Where(i => i.IsGenericType &&
-                                  i.GetGenericTypeDefinition() == typeof(IStreamRequestHandler<,>))
-                       .Select(i => new
-                       {
-                           HandlerType = t,
-                           RequestType = i.GetGenericArguments()[0],
-                           ResponseType = i.GetGenericArguments()[1]
-                       }));
-
-        foreach (var handler in handlerTypes)
-        {
-            var interfaceType = typeof(IStreamRequestHandler<,>)
-                .MakeGenericType(handler.RequestType, handler.ResponseType);
-
-            services.AddTransient(interfaceType, handler.HandlerType);
-        }
-
-        return services;
-    }
+		return services;
+	}
 }
