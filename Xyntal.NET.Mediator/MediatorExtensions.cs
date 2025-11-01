@@ -35,16 +35,16 @@ public static class MediatorExtensions
 		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, Task>>>(notificationsFactories);
 		services.AddSingleton<IReadOnlyDictionary<Type, Func<IServiceProvider, object, CancellationToken, IAsyncEnumerable<object>>>>(streamFactories);
 
-		services.AddSingleton<ISender, Mediator>();
-		services.AddSingleton<IPublisher, Mediator>();
-		services.AddSingleton<IMediator, Mediator>();
+		services.AddScoped<ISender, Mediator>();
+		services.AddScoped<IPublisher, Mediator>();
+		services.AddScoped<IMediator, Mediator>();
 
 		return services;
 	}
 
 	private static HandlerTypeInfo[] GetHandlerTypes(IEnumerable<Assembly> assembliesToScan, Type typeToAdd)
 	{
-		return assembliesToScan
+		return [.. assembliesToScan
 			.SelectMany(a => a.GetTypes())
 			.Where(t => !t.IsAbstract && !t.IsInterface)
 			.SelectMany(imp => imp.GetInterfaces()
@@ -55,8 +55,7 @@ public static class MediatorExtensions
 							Implementations = imp,
 							RequestType = i.GetGenericArguments()[0],
 							ResponseType = i.GetGenericArguments()[1]
-						}))
-			.ToArray();
+						}))];
 	}
 
 	private static IServiceCollection RegisterCommandPipelineBehaviors(this IServiceCollection services, IEnumerable<Assembly> assembliesToScan)

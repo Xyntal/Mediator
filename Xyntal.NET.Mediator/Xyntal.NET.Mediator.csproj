@@ -6,7 +6,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-		<Version>0.10.1-beta.1</Version>
+		<Version>0.11.0-alfa.1</Version>
 		<Title>Xyntal.NET Mediator</Title>
 		<Authors>Xyntal</Authors>
 		<PackageIcon>xyntal_logo.png</PackageIcon>
